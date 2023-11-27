@@ -20,6 +20,11 @@
 #include <e3sm_io_case.hpp>
 #include <e3sm_io_driver.hpp>
 
+#ifdef HAVE_HIP
+#include <hip/hip_runtime_api.h>
+#define HIP_RC(e) if((e) != hipSuccess) assert((e != hipSuccess) && "hipError Encountered)")
+#endif
+
 /*----< check_malloc() >-----------------------------------------------------*/
 int e3sm_io_case::check_malloc(e3sm_io_config *cfg,
                                e3sm_io_driver *driver)
@@ -80,6 +85,51 @@ void e3sm_io_case::wr_buf_init(int gap)
     wr_buf.rec_lld_buf = NULL;
 }
 
+static void *dispatch_allocator(int mem_type, size_t size)
+{
+    int err;
+    void *rval;
+    switch (mem_type) {
+    case MT_MALLOC:
+	rval = malloc(size);
+	break;
+#ifdef HAVE_HIP
+    case MT_HIPMALLOC:
+	HIP_RC(hipMalloc(&rval, size));
+	break;
+    case MT_HIPHOST:
+	HIP_RC(hipHostMalloc(&rval, size, hipHostMallocDefault));
+	break;
+    case MT_HIPMANAGED:
+	HIP_RC(hipMallocManaged(&rval, size, hipMemAttachGlobal));
+	break;
+#endif
+    default:	
+      assert( 0 && "Unrecognized memory type requested.");
+    }
+    assert(rval != NULL);
+    return rval;
+}
+
+static void dispatch_free(int memtype, void *ptr)
+{
+    int err;
+    switch (memtype) {
+    case MT_MALLOC:
+	free(ptr);
+	break;
+#ifdef HAVE_HIP
+    case MT_HIPMALLOC:
+    case MT_HIPHOST:
+    case MT_HIPMANAGED:
+	HIP_RC(hipFree(ptr));
+	break;
+#endif
+    default:	
+      assert(0 && "Unrecognized memory type requested.");
+    }    
+}
+
 /*----< wr_buf_malloc() >----------------------------------------------------*/
 int e3sm_io_case::wr_buf_malloc(e3sm_io_config &cfg, int ffreq)
 {
@@ -117,16 +167,16 @@ int e3sm_io_case::wr_buf_malloc(e3sm_io_config &cfg, int ffreq)
 
     /* allocate and initialize write buffers */
     if (cfg.non_contig_buf) {
-        wr_buf.fix_txt_buf = (char*)   malloc(wr_buf.fix_txt_buflen * sizeof(char));
-        wr_buf.fix_int_buf = (int*)    malloc(wr_buf.fix_int_buflen * sizeof(int));
-        wr_buf.fix_flt_buf = (float*)  malloc(wr_buf.fix_flt_buflen * sizeof(float));
-        wr_buf.fix_dbl_buf = (double*) malloc(wr_buf.fix_dbl_buflen * sizeof(double));
-        wr_buf.fix_lld_buf = (long long*) malloc(wr_buf.fix_lld_buflen * sizeof(long long));
-        wr_buf.rec_txt_buf = (char*)   malloc(wr_buf.rec_txt_buflen * sizeof(char));
-        wr_buf.rec_int_buf = (int*)    malloc(wr_buf.rec_int_buflen * sizeof(int));
-        wr_buf.rec_flt_buf = (float*)  malloc(wr_buf.rec_flt_buflen * sizeof(float));
-        wr_buf.rec_dbl_buf = (double*) malloc(wr_buf.rec_dbl_buflen * sizeof(double));
-        wr_buf.rec_lld_buf = (long long*) malloc(wr_buf.rec_lld_buflen * sizeof(long long));
+        wr_buf.fix_txt_buf = (char*)   dispatch_allocator(cfg.mem_type, wr_buf.fix_txt_buflen * sizeof(char));
+        wr_buf.fix_int_buf = (int*)    dispatch_allocator(cfg.mem_type, wr_buf.fix_int_buflen * sizeof(int));
+        wr_buf.fix_flt_buf = (float*)  dispatch_allocator(cfg.mem_type, wr_buf.fix_flt_buflen * sizeof(float));
+        wr_buf.fix_dbl_buf = (double*) dispatch_allocator(cfg.mem_type, wr_buf.fix_dbl_buflen * sizeof(double));
+        wr_buf.fix_lld_buf = (long long*) dispatch_allocator(cfg.mem_type, wr_buf.fix_lld_buflen * sizeof(long long));
+        wr_buf.rec_txt_buf = (char*)   dispatch_allocator(cfg.mem_type, wr_buf.rec_txt_buflen * sizeof(char));
+        wr_buf.rec_int_buf = (int*)    dispatch_allocator(cfg.mem_type, wr_buf.rec_int_buflen * sizeof(int));
+        wr_buf.rec_flt_buf = (float*)  dispatch_allocator(cfg.mem_type, wr_buf.rec_flt_buflen * sizeof(float));
+        wr_buf.rec_dbl_buf = (double*) dispatch_allocator(cfg.mem_type, wr_buf.rec_dbl_buflen * sizeof(double));
+        wr_buf.rec_lld_buf = (long long*) dispatch_allocator(cfg.mem_type, wr_buf.rec_lld_buflen * sizeof(long long));
     }
     else {
         size_t sum = wr_buf.fix_txt_buflen
@@ -140,7 +190,7 @@ int e3sm_io_case::wr_buf_malloc(e3sm_io_config &cfg, int ffreq)
                    + wr_buf.rec_flt_buflen * sizeof(float)
                    + wr_buf.rec_lld_buflen * sizeof(long long);
 
-        wr_buf.fix_txt_buf = (char*) malloc(sum);
+        wr_buf.fix_txt_buf = (char*) dispatch_allocator(cfg.mem_type, sum);
         wr_buf.fix_int_buf = (int*)      (wr_buf.fix_txt_buf + wr_buf.fix_txt_buflen);
         wr_buf.fix_dbl_buf = (double*)   (wr_buf.fix_int_buf + wr_buf.fix_int_buflen);
         wr_buf.fix_flt_buf = (float*)    (wr_buf.fix_dbl_buf + wr_buf.fix_dbl_buflen);
@@ -171,19 +221,19 @@ int e3sm_io_case::wr_buf_malloc(e3sm_io_config &cfg, int ffreq)
 void e3sm_io_case::wr_buf_free(e3sm_io_config &cfg)
 {
     if (cfg.non_contig_buf) {
-        if (wr_buf.fix_txt_buf != NULL) free(wr_buf.fix_txt_buf);
-        if (wr_buf.fix_int_buf != NULL) free(wr_buf.fix_int_buf);
-        if (wr_buf.fix_flt_buf != NULL) free(wr_buf.fix_flt_buf);
-        if (wr_buf.fix_dbl_buf != NULL) free(wr_buf.fix_dbl_buf);
-        if (wr_buf.fix_lld_buf != NULL) free(wr_buf.fix_lld_buf);
-        if (wr_buf.rec_txt_buf != NULL) free(wr_buf.rec_txt_buf);
-        if (wr_buf.rec_int_buf != NULL) free(wr_buf.rec_int_buf);
-        if (wr_buf.rec_flt_buf != NULL) free(wr_buf.rec_flt_buf);
-        if (wr_buf.rec_dbl_buf != NULL) free(wr_buf.rec_dbl_buf);
-        if (wr_buf.rec_lld_buf != NULL) free(wr_buf.rec_lld_buf);
+        if (wr_buf.fix_txt_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.fix_txt_buf);
+        if (wr_buf.fix_int_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.fix_int_buf);
+        if (wr_buf.fix_flt_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.fix_flt_buf);
+        if (wr_buf.fix_dbl_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.fix_dbl_buf);
+        if (wr_buf.fix_lld_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.fix_lld_buf);
+        if (wr_buf.rec_txt_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.rec_txt_buf);
+        if (wr_buf.rec_int_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.rec_int_buf);
+        if (wr_buf.rec_flt_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.rec_flt_buf);
+        if (wr_buf.rec_dbl_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.rec_dbl_buf);
+        if (wr_buf.rec_lld_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.rec_lld_buf);
     }
     else {
-        if (wr_buf.fix_txt_buf != NULL) free(wr_buf.fix_txt_buf);
+        if (wr_buf.fix_txt_buf != NULL) dispatch_free(cfg.mem_type, wr_buf.fix_txt_buf);
     }
 
     wr_buf.fix_txt_buf = NULL;

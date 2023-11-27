@@ -191,6 +191,11 @@ static void usage (char *argv0) {
            log:       Store variables in the log-based storage layout.\n\
            blob:      Pack and store all data written locally in a contiguous\n\
                       block (blob), ignoring variable's canonical order.\n\
+       [-A allocator ] allocator for I/O buffers\n\
+           malloc:    Standard system malloc\n\
+           hipMalloc: Hip device memory allocator\n\
+           hipMallocHost: Hip host pinned memory allocator\n\
+           hipMallocManaged: Hip migrateable memory\n\
        FILE: Name of input file storing data decomposition maps.\n";
     fprintf (stderr, help, argv0);
 }
@@ -257,7 +262,8 @@ int main (int argc, char **argv) {
     cfg.xtype          = NC_DOUBLE;
     cfg.sort_reqs      = 1;
     cfg.isReqSorted    = 0;
-
+    cfg.mem_type       = MT_MALLOC;
+    
     for (i = 0; i < MAX_NUM_DECOMP; i++) {
         cfg.G_case.nvars_D[i]    = 0;
         cfg.F_case_h0.nvars_D[i] = 0;
@@ -279,7 +285,7 @@ int main (int argc, char **argv) {
     ffreq = 1;
 
     /* command-line arguments */
-    while ((i = getopt (argc, argv, "vkur:s:o:i:jmqf:ha:x:g:y:pt:")) != EOF)
+    while ((i = getopt (argc, argv, "vkur:s:o:i:jmqf:ha:x:g:y:pt:A:")) != EOF)
         switch (i) {
             case 'v':
                 cfg.verbose = 1;
@@ -383,7 +389,25 @@ int main (int argc, char **argv) {
                 else
                     ERR_OUT("Unknown filter")
                 break;
-            case 'h':
+            case 'A':
+                if (strcmp (optarg, "malloc") == 0)
+		  {
+		    cfg.mem_type = MT_MALLOC;
+		  }
+#ifdef HAVE_HIP
+                else if (strcmp (optarg, "hipMalloc") == 0)
+		    cfg.mem_type = MT_HIPMALLOC;
+                else if (strcmp (optarg, "hipHostMalloc") == 0)
+                    cfg.mem_type = MT_HIPHOST;
+                else if (strcmp (optarg, "hipMallocManaged") == 0)
+		  {
+                    cfg.mem_type = MT_HIPMANAGED;
+		  }
+#endif
+                else
+		  ERR_OUT("Unknown Memory Allocator Type");
+                break;
+  	   case 'h':
             default:
                 if (cfg.rank == 0) usage (argv[0]);
                 goto err_out;

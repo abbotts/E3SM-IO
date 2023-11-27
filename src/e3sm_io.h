@@ -74,6 +74,16 @@ typedef enum e3sm_io_api {
     undef_api
 } e3sm_io_api;
 
+typedef enum e3sm_io_memtype {
+  MT_MALLOC,
+#ifdef HAVE_HIP
+  MT_HIPMALLOC,
+  MT_HIPHOST,
+  MT_HIPMANAGED,
+#endif
+  undef_memtype
+} e3sm_io_memtype;
+
 typedef enum e3sm_io_strategy { canonical, blob, log, undef_io } e3sm_io_strategy;
 
 typedef enum e3sm_io_filter { none, deflate, bzip2 } e3sm_io_filter;
@@ -172,6 +182,8 @@ typedef struct e3sm_io_config {
     char *env_log_info;
     int   env_cache;
     int   env_async;
+
+    int   mem_type;
 } e3sm_io_config;
 
 

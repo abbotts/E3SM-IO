@@ -890,6 +890,71 @@ if test "x$have_adios2" = xyes ; then
    CC=$saved_CC
 fi
 
+# Check for ROCM
+have_rocm=no
+AC_ARG_WITH([rocm],
+   [AS_HELP_STRING([--with-rocm=DIR],
+                   [Enable HIP memory types and enable AMD's ROCM stack:
+    --with-rocm=DIR for the path containing include/ and lib/ subdirectories.
+    @<:@default: disabled@:>@
+   ])], [
+   if test "x${withval}" != xyes && test "x${withval}" != xno ; then
+      ROCM_INSTALL=${withval}
+   fi
+   if test -n "$withval"; then
+      rocm_inc="$withval/include"
+      if test -d $withval/lib ; then
+          rocm_lib="$withval/lib"
+      elif test -d $withval/lib64 ; then
+            rocm_lib="$withval/lib64"
+      fi
+      rocm_bindir="$ADIOS2_INSTALL/bin"
+    fi
+
+    rocm_cflags="-I$rocm_inc"
+    rocm_lflags="-L$rocm_lib -lamdhip64"
+
+    if test "x$CPPFLAGS" = x ; then
+       CPPFLAGS="-D__HIP_PLATFORM_AMD__"
+    else
+       str_found=`echo "${CPPFLAGS}" | ${EGREP} -- "-D__HIP_PLATFORM_AMD__"`
+       if test "x$?" != x0 ; then
+          CPPFLAGS="-D__HIP_PLATFORM_AMD__ $CPPFLAGS"
+       fi
+    fi
+
+    if test "x$rocm_cflags" != x ; then
+      if test "x$CPPFLAGS" = x ; then
+         CPPFLAGS="${rocm_cflags}"
+      elif ! echo "${CPPFLAGS}" | ${EGREP} -q -w -- "${rocm_cflags}" ; then
+         # append only if not already appear in CPPFLAGS
+         CPPFLAGS="$CPPFLAGS ${rocm_cflags}"
+      fi
+   fi
+   if test "x$rocm_lflags" != x ; then
+      if test "x$LDFLAGS" = x ; then
+         LDFLAGS="$rocm_lflags"
+      elif ! echo "${LDFLAGS}" | ${EGREP} -q -w -- "${rocm_lflags}" ; then
+         # append only if not already appear in LDFLAGS
+         LDFLAGS="$LDFLAGS $rocm_lflags"
+      fi
+   fi
+   AC_CHECK_HEADER([hip/hip_runtime.h], [have_rocm=yes], [have_rocm=no])
+   if test "x$have_rocm" = xno ; then
+      AC_MSG_ERROR([
+      -----------------------------------------------------------------------
+      Missing ROCM-header files 'hip/hip_runtime.h' required to build E3SM-IO. Use
+      configure command-line option --with-rocm=/path/to/implementation
+      to specify the location of ROCM installation. Abort.
+      -----------------------------------------------------------------------])
+   fi
+   if test "x$have_rocm" = xyes ; then
+      AC_SUBST(ROCM_LIB_PATH, [$rocm_lib])
+      AC_DEFINE([HAVE_HIP], [1], [Enable HIP memory types in test])
+   fi
+])
+AM_CONDITIONAL(HAVE_ROCM, [test "x$have_rocm" = xyes])
+
 AC_ARG_ENABLE([utilities],
     [AS_HELP_STRING([--disable-utilities],
                     [skip building utility programs
@@ -921,6 +986,7 @@ echo \
               HDF5 multi-dataset APIs     - ${have_multi_dset}
               ADIOS-2                     - ${have_adios2}
               Build utility programs      - ${build_utils}
+	      ROCM memory types           - ${have_rocm}
 
    Compilers: MPICC    = ${MPICC}
               MPICXX   = ${MPICXX}"
